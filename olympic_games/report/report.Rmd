@@ -1,0 +1,668 @@
+---
+title: "Project1"
+author: "Anna Kapitonova"
+date: "10/25/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### The project is focused on data analysis of Olympic games for the last 120 years. There are several tasks:
+
+First of all import all necessary libraries:
+```{r load packages and data, echo = TRUE, message = FALSE, warning = TRUE, cashe = TRUE}
+lib_list <- c("dplyr", "skimr", "stringr", "car",
+              "knitr", "formattable", "ggplot2", "devtools", 
+              "ggpubr", "countrycode", "ggrepel")
+
+load_libs <- function(lib_list) {
+  installed_libs <- lib_list %in% rownames(installed.packages())
+  if (any(installed_libs == F)) {
+  install.packages(lib_list[!installed_libs])
+    }
+  invisible(lapply(lib_list, library, character.only = T))
+}
+
+load_libs(lib_list)
+```
+
+### 1. The data are devided into many files in one format. The task is to unite them all in one dataframe. (5 points)
+
+```{r}
+unite_data <- function(path_to_directory, sep = ""){
+  new_path <- paste(path_to_directory, "data", sep = "/")
+  file_list <- list.files(new_path)
+  if (sep == ",") {
+    for (our_file in file_list) {
+      path_to_file <- paste(new_path, our_file, sep = "/")
+      if (exists("data_f")) {
+        df_temporary <- read.csv(path_to_file, na.strings = 'NA')
+        data_f <- rbind(data_f, df_temporary)
+        rm(df_temporary)
+      }
+      else {
+        data_f <- read.csv(path_to_file, na.strings = 'NA')
+      }
+    }
+    return(data_f)
+  }
+  else if (sep == ";") {
+      for (our_file in file_list) {
+        path_to_file <- paste(new_path, our_file, sep = "/")
+        if (exists("data_f")) {
+          df_temporary <- read.csv2(path_to_file, na.strings = 'NA')
+          data_f <- rbind(data_f, df_temporary)
+          rm(df_temporary)
+        }
+        else{
+          data_f <- read.csv2(path_to_file, na.strings = 'NA') 
+        }
+      }
+      return(data_f)
+    }
+  else if (sep == "\t") {
+      for (our_file in file_list) {
+        path_to_file <- paste(new_path, our_file, sep = "/")
+        if (exists("data_f")) {
+          df_temporary <- read.delim(path_to_file, na.strings = 'NA')
+          data_f <- rbind(data_f, df_temporary)
+          rm(df_temporary)
+        }
+        else {
+          data_f <- read.delim(path_to_file, na.strings = 'NA') 
+        }
+      }
+      return(data_f)
+    }
+  else if (sep == "xlsx") {
+    load_libs("readxl")
+      for (our_file in file_list) {
+        path_to_file <- paste(new_path, our_file, sep = "/")
+        if (exists("data_f")) {
+          df_temporary <- read_xlsx(path_to_file, na = 'NA')
+          data_f <- rbind(data_f, df_temporary)
+          rm(df_temporary)
+        }
+        else{
+          data_f <- read_xlsx(path_to_file, na = 'NA')
+        }
+      }
+      return(data_f)
+    }
+  else if (sep == "xls") {
+    load_libs("readxl")
+      for (our_file in file_list) {
+        path_to_file <- paste(new_path, our_file, sep = "/")
+        if (exists("data_f")) {
+          df_temporary <- read_xls(path_to_file, na = 'NA')
+          data_f <- rbind(data_f, df_temporary)
+          rm(df_temporary)
+        }
+        else {
+          data_f <- read_xls(path_to_file, na = 'NA')
+        }
+      }
+      return(data_f)
+    }
+  else{
+      for (our_file in file_list) {
+        path_to_file <- paste(new_path, our_file, sep = "/")
+        if (exists("data_f")) {
+          df_temporary <- read.table(path_to_file, sep = sep,
+                                     header = TRUE, na.strings = 'NA')
+          data_f <- rbind(data_f, df_temporary)
+          rm(df_temporary)
+        }
+        else {
+          data_f <- read.table(path_to_file, header = TRUE, na.strings = 'NA')
+        }
+      }
+      return(data_f)
+    }
+}
+```
+
+```{r}
+path_to_dir_data <- ".."
+olymp <- unite_data(path_to_dir_data, sep = ",")
+```
+
+### 2. Is everything correct? Change the inappropriate data. (5 points)
+
+The dataset has the following features:
+
+- ID – Unique number for each athlete
+- Name – Athlete's name
+- Sex – M or F
+- Age – Integer
+- Height – In centimeters
+- Weight – In kilograms
+- Team – Team name
+- NOC – National Olympic Committee 3-letter code
+- Games – Year and season
+- Year – Integer
+- Season – Summer or Winter
+- City – Host city
+- Sport – Sport
+- Event – Event
+- Medal – Gold, Silver, Bronze, or NA
+
+```{r}
+str(olymp)
+```
+
+```{r}
+skim(olymp)
+```
+
+There are some empty strings in the character columns, they are better be substituted by NA:
+
+```{r}
+olymp <- olymp %>% replace(. == "", NA)
+```
+
+We can improve several columns:
+
+**a) Change the type of data in the second column (Name) from chr to factor.**
+
+Let's find out what the data in this column look like.
+
+```{r}
+unique(olymp$Sex)
+```
+```{r}
+subset(olymp, olymp$Sex == "G" | is.na(olymp$Sex))
+```
+
+It is obvious that sportsmen in first two rows are men, and the last two rows we can simply delete since there are no data filled. Then we can change the type to factor:
+
+```{r}
+olymp$Sex <- replace(olymp$Sex, olymp$Sex == "G", "M")
+olymp <- olymp[-c(226260, 248724), ]
+olymp$Sex <- as.factor(olymp$Sex)
+```
+
+**b) The column "Games" seems to be abundant if we can save only columns "Year" and "Season". However, we should check if these data are duplicated in all rows.**
+
+```{r}
+sum(is.na(olymp$Year))
+sum(is.na(olymp$Season))
+sum(is.na(olymp$Games))
+```
+```{r}
+subset(olymp, is.na(olymp$Year) | is.na(olymp$Season) | is.na(olymp$Games))
+```
+
+We can improve first two columns:
+
+```{r}
+olymp[22836, 10] <- 2000
+olymp[22836, 11] <- "Summer"
+olymp[45423, 10] <- 2004
+olymp[45423, 11] <- "Summer"
+```
+
+But the rest are not filled at all. Check if these sportsmen participated more than once:
+
+```{r}
+olymp %>% filter(ID == c(34727))
+```
+
+So, she participated in the 2012 summer games at the age of 17, and we can add this information to the row 67981:
+
+```{r}
+olymp[67981, 10] <- 2012
+olymp[67981, 11] <- "Summer"
+```
+
+```{r}
+olymp %>% filter(ID == 45919)
+```
+```{r}
+olymp[90641, 11] <- NA
+subset(olymp, olymp$ID == 68370)
+```
+
+Correct the data of Helmut Lehmann:
+
+```{r}
+olymp <- olymp[-135886, ]
+```
+
+Now, let's finally check whether we can delete the column "Games" without losing the data:
+
+```{r}
+filter(olymp, Season != str_sub(Games, 6) | Year != str_sub(Games, 1, 4))
+```
+
+Yes, we can! Here we go:
+
+```{r}
+olymp <- olymp[, -9]
+```
+
+Since there are only two possible variants for season of the games and only three for medals, we will use them as factor:
+
+```{r}
+olymp$Season <- as.factor(olymp$Season)
+olymp$Medal <- ordered(factor(olymp$Medal, levels = c("Gold", "Silver", "Bronze")))
+```
+
+Eventually, we finished cleaning the character and factor variables. Just one more check for numeric variables by skimr:
+
+```{r}
+skim(olymp)
+```
+
+The dataset is not perfect, because there are still many missing values in numeric variables.
+We can try to look throught the data in order to find people with the same ID, for whom full data may be at least in one row.
+
+```{r}
+ID_with_age_na <- olymp %>% filter(is.na(Age)) %>% select(ID)
+age_true <- olymp %>% filter(ID %in% ID_with_age_na$ID & !(is.na(Age)))
+
+ID_with_height_na <- olymp %>% filter(is.na(Height)) %>% select(ID)
+height_true <- olymp %>% filter(ID %in% ID_with_height_na$ID & !(is.na(Height)))
+
+ID_with_weight_na <- olymp %>% filter(is.na(Weight)) %>% select(ID)
+weight_true <- olymp %>% filter(ID %in% ID_with_weight_na$ID & !(is.na(Weight)))
+```
+
+So, the obtained dataframes age_true, height_true and weight_true are empty, and we could not complement the data ourselves.
+
+```{r}
+nrow(age_true)
+nrow(height_true)
+nrow(weight_true)
+```
+
+Also, there are strange values for maximum values of Age, Height and Weight. Let's check these data:
+
+```{r}
+subset(olymp, olymp$Age == max(olymp$Age, na.rm = T) | 
+         olymp$Height == max(olymp$Height, na.rm = T) |
+         olymp$Weight == max(olymp$Weight, na.rm = T))
+```
+
+So, it is obvious, that people can not leave until 240 years and the height of 340 cm is not possible, but the weight of 214 kg is questionable.
+
+```{r}
+olymp[45462, 4] <- NA
+olymp[45651, 5] <- NA
+olymp[c(45462, 45651), ]
+```
+
+After googling Ricardo Bias, I have seen that the sportsman really weights that much.
+
+The final check:
+
+```{r}
+skim(olymp)
+```
+
+Now all looks normal.
+
+### 3. Find out the age of the youngest sportsmen of both sexes in the Olympiad 1992. (2 points)
+
+```{r}
+olymp_1992_youngest <- olymp %>% filter(Year == 1992) %>% group_by(Sex) %>% slice_min(order_by = Age)
+olymp_1992_youngest
+fem_youngest_age <- as.numeric(olymp_1992_youngest[1, 4])
+male_youngest_age <- as.numeric(olymp_1992_youngest[nrow(olymp_1992_youngest), 4])
+```
+
+The youngest female sportsman is **`r fem_youngest_age`** years old, the youngest male sportsman is **`r male_youngest_age`** years old (wow!).
+
+### 4. Calculate the average and standard deviation for variable Height for sportsmen of both sexes. (2 points)
+
+```{r}
+olymp %>% group_by(Sex) %>% summarise(Mean = mean(Height, na.rm = TRUE), SD = sd(Height, na.rm = TRUE))
+```
+
+### 5. Calculate the average and standard deviation for variable Height for female sportsmen in tennis in the Olympiad 2000. Round the answer up to one digit after decimal. (2 points)
+
+```{r}
+olymp %>% filter(Sex == "F" & Sport == "Tennis" & Year == 2000) %>%
+  summarise(Mean = round(mean(Height, na.rm = TRUE), 1), SD = round(sd(Height, na.rm = TRUE), 1))
+```
+
+### 6. In which kind of sport did the heaviest sportsman participate in the Olympiad 2006? (2 points)
+
+```{r}
+olymp %>% filter(Year == 2006) %>% slice_max(order_by = Weight)
+```
+He was participated in **Skeleton** competition.
+
+### 7. How many gold medals did women receive from 1980 to 2010? (2 points)
+
+```{r}
+olymp %>% filter(Year %in% c(1980:2010) & Sex == "F" & Medal == "Gold") %>% count()
+```
+
+### 8. How many times did John Aalberg participate in Olympiad? (2 points)
+
+```{r}
+olymp %>% filter(Name == "John Aalberg")
+```
+
+He participated **`r count(unique(olymp %>% filter(Name == "John Aalberg") %>% select(Year)))` times**: in 1992 and 1994.
+
+### 9. Determine the least and the most abundant age groups for sportsmen in Olympiad 2008. The example groups: [15-25), [25-35), [35-45), [45-55] (4 points)
+
+```{r}
+age_15_25 <- as.numeric((olymp %>% filter(Year == 2008 & Age %in% c(15:24)) %>% count())$n)
+age_25_35 <- as.numeric((olymp %>% filter(Year == 2008 & Age %in% c(25:34)) %>% count())$n)
+age_35_45 <- as.numeric((olymp %>% filter(Year == 2008 & Age %in% c(35:44)) %>% count())$n)
+age_45_55 <- as.numeric((olymp %>% filter(Year == 2008 & Age %in% c(45:54)) %>% count())$n)
+age_groups <- c(age_15_25, age_25_35, age_35_45, age_45_55)
+names(age_groups) <- c("15-24", "25-34", "35-44", "45-54")
+
+#the least abundant group
+paste(min(age_groups), "sportsmen of age", names(age_groups)[which.min(age_groups)])
+
+#the most abundant group
+paste(max(age_groups), "sportsmen of age", names(age_groups)[which.max(age_groups)])
+```
+
+### 10. How did the number of sports change in the Olympiad 2002 in comparison with Olympiad 1994? (2 points)
+
+```{r}
+olymp %>% filter(Year == 2002 | Year == 1994) %>% group_by(Year) %>% count(Sport) %>% count()
+```
+The number **increased on 3** kinds of sport.
+
+### 11. Print for summer and winter olympiads separately top 3 countries for every type of medal. (2 points)
+
+```{r}
+olymp %>% filter(!is.na(Medal)) %>% group_by(Season, Medal) %>% 
+  count(NOC, sort = T) %>% slice_max(n, n = 3)
+```
+### 12. Create a new variable Height_z_scores and save there standartised variable Height. (2 points)
+
+```{r}
+olymp <- olymp %>% mutate(Height_z_scores = as.vector(scale(Height)))
+```
+
+### 13. Additionally: Create a new variable Height_min_max_scaled and save there the variable Height after min-max normalization. (2 points)
+
+```{r}
+min_max_scale <- function(x) {
+    return((x - min(x, na.rm = T)) / (max(x, na.rm = T) - min(x, na.rm = T)))
+}
+olymp <- olymp %>% mutate(Height_min_max_scaled = min_max_scale(Height))
+```
+
+### 14. Compare the height, weight and age of men and women, participated in winter olympic games. Present the result as in scientific paper. (5 points)
+
+Let's check how are these variables distributed:
+
+```{r, echo = F, warning = F, message = F, out.width = "100%"}
+olymp_mean_winter <- olymp %>% filter(Season == "Winter") %>% group_by(Sex) %>%
+  summarise(mean_age = mean(Age, na.rm = T), mean_weight = mean(Weight, na.rm = T),
+            mean_height = mean(Height, na.rm = T))
+
+ggplot(subset(olymp, olymp$Season == "Winter"), aes(x = Age, color = Sex)) +
+  geom_density() + 
+  geom_vline(data = olymp_mean_winter, aes(xintercept = mean_age, color = Sex),
+             linetype = "dashed") + 
+  theme_classic() + 
+  labs(title = "The density of age distribution amongst men and women",
+       subtitle = "Winter Olympic Games 1896-2016")
+
+ggplot(subset(olymp, olymp$Season == "Winter"), aes(x = Height, color = Sex)) +
+  geom_density() + 
+  geom_vline(data = olymp_mean_winter, aes(xintercept = mean_height, color = Sex),
+             linetype = "dashed") + 
+  theme_classic() + 
+  labs(x = "Height, cm",
+       title = "The density of height distribution amongst men and women",
+       subtitle = "Winter Olympic Games 1896-2016")
+
+ggplot(subset(olymp, olymp$Season == "Winter"), aes(x = Weight, color = Sex)) +
+  geom_density() + 
+  geom_vline(data = olymp_mean_winter, aes(xintercept = mean_weight, color = Sex),
+             linetype = "dashed") + 
+  theme_classic() + 
+  labs(x = "Weight, kg",
+       title = "The density of weight distribution amongst men and women",
+       subtitle = "Winter Olympic Games 1896-2016")
+```
+
+Now we will compare these variables between tro sexes:
+
+```{r, echo = F, warning = F, message = F, out.width = "100%"}
+ggboxplot(subset(olymp, olymp$Season == "Winter" & olymp$Age != "NA"),
+          x = "Sex",  y = "Age") + 
+  stat_compare_means(method = "t.test") +
+  labs(title = "The comparison of sportsmen's age",
+       subtitle = "Winter Olympic Games 1896-2016")
+
+ggboxplot(subset(olymp, olymp$Season == "Winter" & olymp$Height != "NA"),
+          x = "Sex",  y = "Height") + 
+  stat_compare_means(method = "t.test") +
+  labs(title = "The comparison of sportsmen's height",
+       subtitle = "Winter Olympic Games 1896-2016")
+
+ggboxplot(subset(olymp, olymp$Season == "Winter" & olymp$Weight != "NA"),
+          x = "Sex",  y = "Weight") + 
+  stat_compare_means(method = "t.test") +
+  labs(title = "The comparison of sportsmen's weight",
+       subtitle = "Winter Olympic Games 1896-2016")
+```
+
+And the combined table:
+
+```{r, echo = F}
+height <- olymp %>% filter(Season == "Winter" & !is.na(Height)) %>%
+  select(Sex, Height) %>%
+  group_by(Sex) %>% summarise(n = n(), 
+                              '[min, max]' = paste("[", min(Height),
+                                                   ",", max(Height), "]"),
+                              'mean \u00b1 sd' = paste(round(mean(Height), 0),
+                                                       round(sd(Height), 0),
+                                                       sep = " \u00b1 "))
+
+weight <- olymp %>% filter(Season == "Winter" & !is.na(Weight)) %>%
+  select(Sex, Weight) %>%
+  group_by(Sex) %>% summarise(n = n(), 
+                              '[min, max]' = paste("[", min(Weight),
+                                                   ",", max(Weight), "]"),
+                              'mean \u00b1 sd' = paste(round(mean(Weight), 0),
+                                                       round(sd(Weight), 0), 
+                                                       sep = " \u00b1 "))
+
+age <- olymp %>% filter(Season == "Winter" & !is.na(Age)) %>%
+  select(Sex, Age) %>%
+  group_by(Sex) %>% summarise(n = n(), 
+                              '[min, max]' = paste("[", min(Age),
+                                                   ",", max(Age), "]"),
+                              'mean \u00b1 sd' = paste(round(mean(Age), 0),
+                                                       round(sd(Age), 0),
+                                                       sep = " \u00b1 "))
+
+f_m_table <- bind_rows(height, weight, age, .id = "Variable")
+f_m_table[1:2, 1] <- "Height, cm"
+f_m_table[3:4, 1] <- "Weight, kg"
+f_m_table[5:6, 1] <- "Age, years"
+                              
+```
+
+```{r, echo = T, message = FALSE, warning = TRUE}
+load_libs("kableExtra")
+```
+
+```{r, echo = F}
+f_m_table %>% 
+  kbl(caption = "Comparison of the height, weight and age of men and women, participated in the winter olympic games.") %>% kable_styling(font_size = 14) %>% 
+  gsub("font-size: initial !important;", 
+         "font-size: 14pt !important;",
+         .) %>% kable_minimal(full_width = F)
+```
+
+### 15. We are particularly interested in variables Team and Medal. What can you say about them? Do we have any grounds to assert that they may be connected? (5 points)
+
+Instead of using variable Team (where more than 1000 unique names) I suggest using NOC as it is a universal code for every country.
+
+Let's check if the data in NOC column is full:
+
+```{r}
+subset(olymp, is.na(olymp$NOC))
+```
+
+Correct:
+
+```{r}
+olymp[254203, 8] <- "ITA"
+```
+
+Let's add a new column with full names of countries.
+
+```{r}
+olymp <- olymp %>%
+  mutate(Country = countrycode(NOC, "ioc", c("country.name"),
+                                                nomatch = ""))
+olymp1 <- olymp %>% filter(Country != "")
+
+additional_converter <- data.frame(
+  "ioc" = c('AHO', 'ANZ', 'BOH', 'CRT', 'EUN', 'FRG', 'GDR', 'IOA', 'ISV', 'JP', 'LIB',
+            'MAL', 'NBO', 'NFL', 'RHO', 'ROT', 'SAA', 'SCG', 'TCH', 'UAR', 'UNK',
+            'URS', 'VNM', 'WIF', 'YAR', 'YMD', 'YUG'),
+  "country.name" = c('Netherlands Antilles', 'Australasia', 'Bohemia',
+                     'Crete', 'Unified Team', 'West Germany', 'East Germany',
+                     'Individual Olympic Athletes', 'United States Virgin Islands',
+                     'Japan', 'Lebanon', 'Malaya', 'North Borneo', 'Newfoundland',
+                     'Rhodesia', 'Refugee Olympic Athletes', 'Saar',
+                     'Serbia and Montenegro', 'Czechoslovakia', 'United Arab Republic',
+                     'Unknown', 'Soviet Union', 'South Vietnam',
+                     'West Indies Federation', 'North Yemen',
+                     'South Yemen', 'Yugoslavia'))
+
+olymp2 <- olymp %>% filter(Country == "") %>%
+  mutate(Country = countrycode(NOC, "ioc", c("country.name"),
+                              custom_dict = additional_converter))
+
+olymp <- union_all(olymp1, olymp2)
+```
+
+```{r}
+# create a dataset for all medals of every country
+country_medal <- olymp %>% filter(!is.na(Medal)) %>% select(Country, Medal) %>%
+  count(Country, Medal)
+
+# create a dataset for top 30 countries with the biggest number of medals
+country_medal_top30 <- olymp %>% filter(!is.na(Medal)) %>% select(Country, Medal) %>%
+  count(Country) %>% arrange(desc(n)) %>% slice_head(n = 30)
+
+country_medal$Country <- factor(country_medal$Country,
+                                      levels = country_medal_top30$Country)
+
+country_medal <- country_medal %>% filter(Country != "NA") %>% arrange(n)
+```
+
+```{r, out.width = "100%"}
+# visualisation
+ggplot(country_medal, aes(y = n, x = Country, fill = Medal)) +
+  geom_col() +
+  coord_flip() +
+  scale_x_discrete(limits = rev) +
+  scale_fill_manual(values = c("#ffd700","#c0c0c0","#a0522d")) +
+  theme_classic() +
+  labs(x = "Country", y = "Number of medals", 
+       title = "Top 30 countries with the biggest number of medals",
+       subtitle = "Olympic games 1896-2016")
+```
+
+
+Thought, if we unite East Germany and West Germany, as well as summarise results of Soviet Union and Russia teams, for example, we will get slightly different numbers.
+
+It is an interesting fact, that top countries are pretty big, so maybe the medal counts just depend on the number of participants from each country.
+
+```{r}
+# create a dataset for all participants from every country
+country_participants <- olymp %>% count(Country)
+
+country_participants$Country <- factor(country_participants$Country,
+                                      levels = country_medal_top30$Country)
+
+country_participants <- country_participants %>% filter(Country != "NA")
+
+names(country_participants)[2] <- "all_n"
+
+country_all_to_medal <- merge(country_participants, country_medal_top30)
+names(country_all_to_medal)[3] <- "medals_n"
+country_all_to_medal <- country_all_to_medal %>%
+  mutate(medals_per_man = round(medals_n/all_n, 2)) %>% arrange(desc(medals_n)) %>% 
+  slice_head(n = 15)
+```
+
+
+```{r, out.width = "100%"}
+ggplot(country_all_to_medal, aes(y = medals_per_man, x = all_n,
+                                 size = medals_n, label = Country)) +
+  geom_point(shape = 21, color = "red", fill = "red", alpha = 0.7) +
+  scale_size(range = c(0.5, 9), name = "Number of medals") + 
+  theme_classic() +
+  geom_text_repel(size = 3.5, point.size = 7) + 
+  labs(x = "Number of participants", y = "Medals per participant", 
+       title = "Top 20 countries with the biggest number of medals",
+       subtitle = "Olympic games 1896-2016")
+       
+```
+
+The result shows that in Soviet Union and East Germany the medals per participant ratio is greater than for United States, despite the biggest number of participants and won medals.
+
+### 16. Additional task: our own hypotheses.
+
+Let's find out whether the success in the basketball could be connected with the height of the sportsmen: 
+
+```{r, out.width = "100%"}
+olymp_basketball_height <- olymp %>%
+  filter(!is.na(Height) & Sport == "Basketball") %>%
+  group_by(Sex) %>% select(Sex, Height, Medal)
+
+ggplot(olymp_basketball_height, aes(y = Height, x = factor(Medal), fill = Sex)) +
+  geom_boxplot(na.rm = T) +
+  geom_jitter(color = "black", size=0.05, alpha=0.5) + 
+  theme_classic() +
+  facet_grid(cols = vars(Sex)) +
+  labs(x = "Medal",
+       title = "The height of basketball winners over time",
+       subtitle = "Olympic games 1896-2016")
+```
+```{r}
+f_medal <- olymp_basketball_height %>% filter(Sex == "F" & !is.na(Medal))
+f_not_medal <- olymp_basketball_height %>% filter(Sex == "F" & is.na(Medal))   
+var.test(f_medal$Height, f_not_medal$Height)
+```
+```{r}
+t.test(f_medal$Height, f_not_medal$Height, var.equal = FALSE)
+```
+So, if we will unite all kinds of medals among women basketball players, the difference in height is not significant. However, if we choose only gold medals, we can reject the null hyposesis:
+
+```{r}
+f_gold_medal <- olymp_basketball_height %>% filter(Sex == "F" & Medal == "Gold")
+var.test(f_gold_medal$Height, f_not_medal$Height)
+```
+```{r}
+t.test(f_gold_medal$Height, f_not_medal$Height, var.equal = FALSE)
+```
+
+And among men:
+
+```{r}
+m_medal <- olymp_basketball_height %>% filter(Sex == "M" & !is.na(Medal))
+m_gold_medal <- olymp_basketball_height %>% filter(Sex == "M" & Medal == "Gold")
+m_not_medal <- olymp_basketball_height %>% filter(Sex == "M" & is.na(Medal))   
+var.test(m_medal$Height, m_not_medal$Height)
+```
+```{r}
+t.test(m_medal$Height, m_not_medal$Height, var.equal = TRUE)
+```
+```{r}
+var.test(m_gold_medal$Height, m_not_medal$Height)
+```
+```{r}
+t.test(m_gold_medal$Height, m_not_medal$Height, var.equal = TRUE)
+```
+Thus, we can conclude that the height of successful female and male basketball players and of players without medals differ significantly (female: df = 159.04, p-value = 0.04788; male: df = 302.27, p-value = 1.203e-07).
