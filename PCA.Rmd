@@ -1,0 +1,156 @@
+---
+title: "PCA"
+author: "anna-kapitonova"
+date: "12/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r cars}
+summary(cars)
+```
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r load packages and data, echo = TRUE, message = FALSE, warning = TRUE, cashe = TRUE}
+lib_list <- c("dplyr", "vegan", "ggplot2", "checkmate", "tibble")
+
+load_libs <- function(lib_list) {
+  installed_libs <- lib_list %in% rownames(installed.packages())
+  if (any(installed_libs == F)) {
+  install.packages(lib_list[!installed_libs])
+    }
+  invisible(lapply(lib_list, library, character.only = T))
+}
+
+load_libs(lib_list)
+```
+
+```{r data import}
+
+setwd("~/Desktop/BI/Statistics/data/superconduct")
+t1 <- read.csv("./train.csv")
+t2 <- read.csv("./unique_m.csv")
+```
+
+```{r data transformation}
+
+conduct <- cbind(t1, t2)
+conduct <- conduct[, c(1:81, 83:169)]
+
+conduct <- conduct %>% mutate(across(where(is.integer), as.numeric))
+conduct <- Filter(function(x) sd(x) != 0, conduct)
+```
+
+```{r create test and train}
+
+# Set the fractions of the dataframe you want to split into training and test.
+train_df <- 0.8
+test_df <- 0.2
+
+# Compute sample sizes.
+size_train <- floor(train_df * nrow(conduct))
+size_test <- floor(test_df * nrow(conduct))
+
+# Create the randomly-sampled indices for the dataframe. Use setdiff() to
+# avoid overlapping subsets of indices.
+indices_train <- sort(sample(seq_len(nrow(conduct)), size = size_train))
+indices_test <- setdiff(seq_len(nrow(conduct)), indices_train)
+
+# Finally, output the two dataframes for training and test.
+train <- conduct[indices_train, ]
+test <- conduct[indices_test, ]
+
+```
+
+```{r, normalisation}
+
+#except for the column 'critical_temp'
+
+train_means <- train[, 1:158] %>% apply(2, mean)
+train_sd <- train[, 1:158] %>% apply(2, sd)
+
+special_scale <- function(x){(x - train_means)/train_sd}
+
+test[, 1:158] <- test[, 1:158] %>%
+  sweep(MARGIN = 2, STATS = train_means, FUN = "-" ) %>%
+  sweep(MARGIN = 2, STATS = train_sd, FUN = "/" )
+
+```
+
+Now we need to remove columns, which consist only of NaN values (because before standartization they were all identical => sd = 0)
+
+```{r linear model}
+
+lin_temp <- lm(critical_temp ~ ., data=test)
+summary(lin_temp)
+
+```
+Adjusted R-squared is less than 0.8 => the model is not so good in predicting the critical temperature of conductors
+
+```{r PCA}
+
+pca_train <- rda(train[, -1], scale = TRUE)
+head(summary(pca_train))
+
+```
+```{r}
+df_scores <- data.frame(train,
+                        scores(pca_train, display = "sites",
+                               choices = c(1, 2, 3), scaling = "sites"))
+
+p_scores <- ggplot(df_scores, aes(x = PC1, y = PC2)) + 
+  geom_point(aes(color = critical_temp), alpha = 0.5) +
+  coord_equal(xlim = c(-0.5, 0.5), ylim = c(-0.5, 0.5)) + 
+  ggtitle(label = "Ординация в осях главных компонент") + 
+  theme_bw()
+
+p_scores
+```
+
+```{r}
+screeplot(pca_train, npcs = 15, type = "lines", bstick = TRUE)
+```
+We can say that first five components are the most important.
+
+```{r pca coefficients extraction}
+
+# Run Principal Components Analysis again with another function
+pc <- prcomp(train %>% select(-critical_temp), scale = TRUE)
+
+# Extract PCs  (1st 5 PCs)
+train_new <- as_tibble(pc$x) %>% select(PC1:PC5)
+test_new <- as_tibble(predict(pc, newdata = test %>% select(-critical_temp))) %>% select(PC1:PC5)
+
+```
+
+```{r}
+
+#compute standard deviation of each principal component
+std_dev <- pc$sdev
+#compute variance
+pr_var <- std_dev^2
+prop_varex <- pr_var/sum(pr_var)
+plot(cumsum(prop_varex), xlab = "Principal Component",
+     ylab = "Cumulative Proportion of Variance Explained",
+     type = "b")
+```
+
+```{r}
+critical_temp_column <- test %>% select(critical_temp)
+test_new <- cbind(test_new, critical_temp_column)
+lin_temp_new <- lm(critical_temp ~ ., data = test_new)
+summary(lin_temp_new)
+```
+
+I guess, something went wrong...
+
+
