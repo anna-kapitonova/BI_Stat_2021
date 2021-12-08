@@ -9,17 +9,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r cars}
-summary(cars)
-```
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
-
 ```{r load packages and data, echo = TRUE, message = FALSE, warning = TRUE, cashe = TRUE}
 lib_list <- c("dplyr", "vegan", "ggplot2", "checkmate", "tibble")
 
