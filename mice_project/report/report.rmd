@@ -1,0 +1,433 @@
+---
+title: "Winter_project_mice"
+author: "anna-kapitonova"
+date: "4/9/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages and data, echo = TRUE, message = FALSE, warning = TRUE, cashe = TRUE}
+lib_list <- c("readxl", "dplyr", "ggplot2",
+              "car", "multcomp", "caret",
+              "vegan", "plotly", "DESeq2",
+              "EnhancedVolcano")
+
+load_libs <- function(lib_list) {
+  installed_libs <- lib_list %in% rownames(installed.packages())
+  if (any(installed_libs == F)) {
+  install.packages(lib_list[!installed_libs])
+    }
+  invisible(lapply(lib_list, library, character.only = T))
+}
+
+load_libs(lib_list)
+```
+
+# 1. Dataset description (5 points)
+- how many mice were studied?
+- what groups can you describe?
+- are the groups balanced?
+- how many missed values data cotain? (NA)
+
+**"Expression levels of 77 proteins measured in the cerebral cortex of 8 classes of control and Down syndrome mice exposed to context fear conditioning, a task used to assess associative learning."**
+
+```{r load data}
+data = read_xls("../data/raw_data.xls", na = 'NA')
+```
+```{r dataset description}
+str(data)
+```
+```{r feature transformation}
+data$Genotype <- as.factor(data$Genotype)
+data$Treatment <- as.factor(data$Treatment)
+data$Behavior <- as.factor(data$Behavior)
+data$class <- as.factor(data$class)
+```
+**So, here are 72 mice (38 control and 34 trisomic (Down syndrome)). In the experiments, 15 measurements were registered of each protein per sample/mouse.The dataset contains a total of `r nrow(data)` measurements per protein. Each measurement can be considered as an independent sample/mouse.**
+
+We can find the following groups:
+
+- `r length(unique(data$Genotype))` genotype groups
+```{r, echo=FALSE}
+table(data$Genotype)
+```
+- `r length(unique(data$Treatment))` treatment groups
+```{r, echo=FALSE}
+table(data$Treatment)
+```
+- `r length(unique(data$Behavior))` behavior groups
+```{r, echo=FALSE}
+table(data$Behavior)
+```
+Some mice have been stimulated to learn (context-shock) and others have not (shock-context).
+
+- therefore `r length(unique(data$class))` experimental classes in total
+```{r, echo=FALSE}
+table(data$class)
+```
+
+**They are quite balanced**
+
+```{r check NA}
+colSums(is.na(data))
+```
+
+Missing values are found only in numeric columns with protein levels.
+
+# 2. Are there any differences in the level of BDNF_N production depending on the experimental class? (10 points)
+
+```{r}
+data_BDNF_without_na <- subset(data, !is.na(data$BDNF_N))
+data_BDNF_without_na %>%
+  group_by(class) %>%
+  summarise(mean_BDNF_N = mean(BDNF_N),
+            sd_BDNF_N = sd(BDNF_N))
+```
+## Linear model with discrete predictor and ANOVA
+
+```{r}
+mod_data <- lm(BDNF_N ~ class,
+               data = data_BDNF_without_na)
+summary(mod_data)
+```
+```{r ANOVA}
+data_anova <- Anova(mod_data)
+data_anova
+```
+The level of BDNF protein significantly depends on the experimental class (F = `r data_anova["F value"][[1]][1]`, p_value = `r data_anova["Pr(>F)"][[1]][1]`, df_1 = `r data_anova$Df[1]`, df_2 = `r data_anova$Df[2]`).
+
+```{r post-hoc}
+post_hoc <- glht(mod_data,
+                  linfct = mcp(class = "Tukey"))
+result_hoc <- summary(post_hoc)
+result_hoc
+```
+For pairwise multiple comparisons post-hoc paired Tukey test was used (df = `r result_hoc$df`). We observed significant differences between several classes (here we listed groups with only one factor changing, where interpretation is more clear):
+
+- c-SC-s and c-CS-s (control mice, stimulated/not stimulated to learn, injected with saline)
+- c-SC-m and c-CS-m (control mice, stimulated/not stimulated to learn, injected with memantine)
+- c-SC-s and c-SC-m (control mice, not stimulated to learn, injected with saline/memantine)
+- t-SC-s and t-CS-s (trisomy mice, stimulated/not stimulated to learn, injected with saline)
+- t-CS-s and c-CS-s (trisomy/control mice, stimulated to learn, injected with saline)
+- t-CS-m and c-CS-m (trisomy/control mice, stimulated to learn, injected with memantine)
+- t-SC-m and c-SC-m (trisomy/control mice, not stimulated to learn, injected with memantine)
+
+```{r, echo=FALSE}
+ggplot(data_BDNF_without_na,
+       aes(class, BDNF_N, color = class)) +
+  stat_summary(fun.data = "mean_cl_normal") +
+  ggtitle(label = "Comparison of BDNF protein level in different classes") +
+  theme_bw()
+```
+
+*BDNF is a member of the neurotrophin family of growth factors, which are related to the canonical nerve growth factor. Control mice, stimulated to learn, demonstrate the highest level of BDNF protein (Brain-derived neurotrophic factor), in spite of treatment type.*
+
+*Memantine is an NMDA receptor antagonist, that works by decreasing abnormal activity in the brain. According to the article, memantine was shown to rescue performance of the Ts65Dn in several learning and memory tasks.*
+
+**Our results show that learning stimulation increases BDNF level in control mice (that is in agreement with previous data), but decreases it in trisomy mice (regardless of treatment type). Interestingly, memantine decreases BDNF protein level in control mice, not stimulated to learn. Furthermore, the analysis between control and trisomy groups, stimulated to learn, have revealed that the level of BDNF protein content is smaller in trisomy mice, regardless of treatment type. However, not stimulated trisomy mice exposed to memantine treatment show increased level of BDNF in comparison with contol group.**
+
+# 3. Try to build a linear model, that can predict the level of ERBB4_N production by other proteins data (15 points)
+- examine the model
+- explain why it is a good/bad solution
+
+```{r data preparation}
+data_without_na <-na.omit(data)
+# remove Mouse_ID column
+data_without_na_for_ERBB4 <- data_without_na[, 2:82]
+
+# split the data into training and test set
+set.seed(123)
+training_samples <- 
+  data_without_na_for_ERBB4$ERBB4_N %>%
+  createDataPartition(p = 0.8, list = FALSE)
+
+train_data <-
+  data_without_na_for_ERBB4[training_samples, ]
+test_data <-
+  data_without_na_for_ERBB4[-training_samples, ]
+```
+
+```{r build a model}
+ERBB4_pred_model <- lm(ERBB4_N ~ .,
+                       data = train_data)
+summary(ERBB4_pred_model)
+```
+Metrics look good
+
+```{r model performance}
+predictions <- ERBB4_pred_model %>%
+  predict(test_data)
+
+# prediction error, RMSE
+RMSE(predictions, test_data$ERBB4_N)
+# r-square
+R2(predictions, test_data$ERBB4_N)
+```
+**Model shows rather goof performance**
+
+**ERBB4 is a receptor tyrosine kinase, a member of the epidermal growth factor receptor family. It plays an essential role as cell surface receptor for neuregulins and EGF family members and regulates development of the central nervous system.**
+
+Let's find out what are the best predictors for this target:
+
+```{r}
+importance <- varImp(ERBB4_pred_model, scale=FALSE)
+# summarize importance
+importance %>% arrange(desc(Overall)) %>% top_n(10)
+```
+**So, the most important interactors/effectors, that are connected with ERBB4 content are PSD95(postsynaptic density protein 95, membrane-associated guanylate kinase), behavior type (stimulated/notstimulated to learn), Tau protein (maintains the stability of microtubules in axons), pGSK3B_Tyr216 (glycogen synthase kinase-3 in phossphorylated form), IL1B (interleukin 1 beta), kinase AKT (there is a data, showing that ERBB4 activation promotes AKT signaling!) and other, including BDNF, described earlier.**
+
+# 4. PCA (15 points)
+- ordination
+- plots of factor loadings
+- find out, what percent of the data each component explain
+- 3D plot for first three components
+
+```{r PCA}
+data_num <- 
+  data_without_na %>% select_if(is.numeric)
+data_pca <- rda(data_num, scale = TRUE)
+head(summary(data_pca))
+```
+```{r ordination}
+biplot(data_pca, scaling = "sites", display = "sites")
+```
+```{r}
+df_scores <- data.frame(data_without_na,
+                        scores(data_pca,
+                               display = "sites",
+                               choices = c(1, 2, 3),
+                               scaling = "sites"))
+
+p_scores <- ggplot(df_scores, aes(x = PC1, y = PC2)) + 
+  geom_point(aes(color = class), alpha = 0.5) +
+  coord_equal(xlim = c(-1.2, 1.2),
+              ylim = c(-1.2, 1.2)) +
+  ggtitle(label="Ordination plot of the first two axes of PCA") +
+  theme_bw()
+p_scores
+```
+
+```{r factor loadings}
+biplot(data_pca, scaling = "species",
+       display = "species")
+```
+
+```{r component explanation}
+pca_summary <- summary(data_pca)
+pca_result <- as.data.frame(pca_summary$cont)
+plot_data <- as.data.frame(t(pca_result[c("Proportion Explained"),]))
+plot_data$component <- rownames(plot_data)
+plot_data$component <-
+  gsub("importance.", "",
+       as.character(plot_data$component))
+
+plot_data <- plot_data %>%
+  slice_max(`Proportion Explained`, n = 15)
+
+ggplot(plot_data,
+       aes(reorder(component, -`Proportion Explained`),
+           `Proportion Explained`, fill = "pink")) +
+  geom_bar(stat = "identity") +
+  labs(x = "Component") + theme_bw() +
+  theme(legend.title = element_blank()) +
+  theme(legend.position = "none")
+```
+
+```{r 3D plot}
+prin_comp <- prcomp(data_num, rank. = 3)
+components <- prin_comp[["x"]]
+components <- data.frame(components)
+components$PC2 <- -components$PC2
+components$PC3 <- -components$PC3
+components = cbind(components, data_without_na$class)
+
+explained_variance_ratio <- summary(prin_comp)[["importance"]]['Proportion of Variance', 1:3]
+explained_variance_ratio <- 100 * sum(explained_variance_ratio)
+
+tit = paste('Explained Variance', 
+            explained_variance_ratio)
+
+fig <- plot_ly(components, x = ~PC1, y = ~PC2, z = ~PC3,
+               color = ~data_without_na$class,
+               colors = c('#636EFA','#EF553B',
+                          '#00CC96')) %>%
+  add_markers(size = 12)
+
+fig <- fig %>%
+  layout(
+    title = tit,
+    scene = list(bgcolor = "#e5ecf6")
+)
+
+fig
+```
+
+# 5. The search for differentially expressed genes (proteins) - creative part of the task (15 points).
+
+**We will use DESeq2 analysis. Here we need to compare groups pair-wise**
+
+```{r data preparation for deseq}
+data_for_deseq <- data_without_na %>%
+  select(!c(MouseID, Genotype,
+            Behavior, Treatment, class))
+
+data_for_deseq <- data.frame(t(data_for_deseq))
+
+# DESeq does not work with numeric type
+# so let's multiply our values and convert them to integers
+data_for_deseq <- data_for_deseq * 10000000
+data_for_deseq <- data_for_deseq %>%
+  mutate_if(is.numeric,as.integer)
+colnames(data_for_deseq) <- data_without_na$MouseID
+
+samples = colnames(data_for_deseq)
+condition = data_without_na$class
+colData = data.frame(samples = samples,
+                     condition = condition)
+```
+
+```{r, echo=FALSE}
+# Create DESEq2 dataset
+dds_c_SC_s = DESeqDataSetFromMatrix(countData = data_for_deseq,
+                                    colData = colData,
+                                    design = ~condition)
+
+dds_c_CS_s = DESeqDataSetFromMatrix(countData = data_for_deseq,
+                                    colData = colData,
+                                    design = ~condition)
+
+dds_t_SC_s = DESeqDataSetFromMatrix(countData = data_for_deseq,
+                                    colData = colData,
+                                    design = ~condition)
+
+dds_t_CS_s = DESeqDataSetFromMatrix(countData = data_for_deseq,
+                                    colData = colData,
+                                    design = ~condition)
+
+#Set the reference to be compared
+dds_c_SC_s$condition = relevel(dds_c_SC_s$condition, "c-SC-s")
+dds_c_CS_s$condition = relevel(dds_c_SC_s$condition, "c-CS-s")
+dds_t_SC_s$condition = relevel(dds_c_SC_s$condition, "t-SC-s")
+dds_t_CS_s$condition = relevel(dds_c_SC_s$condition, "t-CS-s")
+```
+```{r analysis, message=FALSE, warning=FALSE}
+
+dds_c_SC_s = DESeq(dds_c_SC_s, test = 'Wald',
+                   betaPrior = FALSE,
+                   sfType = 'ratio')
+
+dds_c_CS_s = DESeq(dds_c_CS_s, test = 'Wald',
+                   betaPrior = FALSE,
+                   sfType = 'ratio')
+
+dds_t_SC_s = DESeq(dds_t_SC_s, test = 'Wald',
+                   betaPrior = FALSE,
+                   sfType = 'ratio')
+
+dds_t_CS_s = DESeq(dds_t_CS_s, test = 'Wald',
+                   betaPrior = FALSE,
+                   sfType = 'ratio')
+```
+```{r}
+resultsNames(dds_t_CS_s)
+```
+```{r}
+
+res_c_SC <- results(dds_c_SC_s, alpha = 0.05,
+                    contrast = c("condition",
+                                 "t-SC-s", "c-SC-s"))
+summary(res_c_SC)
+```
+```{r}
+res_c_CS <- results(dds_c_CS_s, alpha = 0.05,
+                    contrast = c("condition",
+                                 "t-CS-s", "c-CS-s"))
+summary(res_c_CS)
+```
+```{r}
+res_t_SC <- results(dds_t_SC_s, alpha = 0.05,
+                    contrast = c("condition",
+                                 "t-SC-m", "t-SC-s"))
+summary(res_t_SC)
+```
+```{r}
+res_t_CS <- results(dds_t_CS_s, alpha = 0.05,
+                    contrast = c("condition",
+                                 "t-CS-m", "t-CS-s"))
+summary(res_t_CS)
+```
+
+```{r, echo=FALSE}
+EnhancedVolcano(res_c_SC, lab = row.names(res_c_SC),
+                x = 'log2FoldChange', y = 'pvalue',
+                pCutoff = 0.05, FCcutoff = 0.5,
+                title =
+                  "Control/trisomy not stimulated to learn",
+                titleLabSize = 8,
+                subtitleLabSize = 8,
+                captionLabSize = 8,
+                axisLabSize = 8,
+                legendLabSize = 8,
+                legendIconSize = 1.0,
+                legendPosition = 'none')
+
+EnhancedVolcano(res_c_CS, lab = row.names(res_c_CS),
+                x = 'log2FoldChange', y = 'pvalue',
+                pCutoff = 0.05, FCcutoff = 0.5,
+                title =
+                  "Control/trisomy stimulated to learn",
+                titleLabSize = 8,
+                subtitleLabSize = 8,
+                captionLabSize = 8,
+                axisLabSize = 8,
+                legendLabSize = 8,
+                legendIconSize = 1.0,
+                legendPosition = 'none')
+
+EnhancedVolcano(res_t_SC, lab = row.names(res_t_SC),
+                x = 'log2FoldChange', y = 'pvalue',
+                pCutoff = 0.05, FCcutoff = 0.5,
+                title =
+                  "Trisomy mice not stimulated to learn,
+                injected with memantine",
+                titleLabSize = 8,
+                subtitleLabSize = 8,
+                captionLabSize = 8,
+                axisLabSize = 8,
+                legendLabSize = 8,
+                legendIconSize = 1.0,
+                legendPosition = 'none')
+
+EnhancedVolcano(res_t_CS, lab = row.names(res_t_CS),
+                x = 'log2FoldChange', y = 'pvalue',
+                pCutoff = 0.05, FCcutoff = 0.5,
+                title =
+                  "Trisomy mice stimulated to learn,
+                injected with memantine",
+                titleLabSize = 8,
+                subtitleLabSize = 8,
+                captionLabSize = 8,
+                axisLabSize = 8,
+                legendLabSize = 8,
+                legendIconSize = 1.0,
+                legendPosition = 'none')
+```
+
+
+Thus, the level of the following proteins is increased in trisomy mice, not stimulated to learn, comparing to control:
+
+- ribosomal protein S6
+- Tau
+- pPKCG (protein kinase C gamma type)
+- histone AcetylH3K9
+
+The level of histone AcetylH3K9 also differ in trisomy mice, stimulated to learn, comparing to control. The acetylation of this histone is associated with gene activation, however no evidence of its connection to Down syndrome emergence have been reported so far.
+
+After injection of trisomy mice, not stimulated to learn, with memantine, pPKCG and kinase of ribosomal protein S6 were down-regulated, in contrast to the first comparison.
+
+After injection of trisomy mice, stimulated to learn, with memantine, the level of proto-oncogene serine/threonine-protein kinase BRAF was elevated. This protein plays a role in cell growth by sending signals inside the cell promoting, among other functions, cell division.
+
+**Thank you for your time and attention, so to say! :)**
